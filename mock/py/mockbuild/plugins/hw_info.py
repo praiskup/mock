@@ -26,7 +26,8 @@ class HwInfo(object):
         self.buildroot = buildroot
         self.hw_info_opts = conf
         self.config = buildroot.config
-        plugins.add_hook("preinit", self._PreInitHook)
+        with self.buildroot.uid_manager:
+            plugins.add_hook("preinit", self._PreInitHook)
 
     # =============
     # 'Private' API
