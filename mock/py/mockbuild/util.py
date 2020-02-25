@@ -36,6 +36,7 @@ import termios
 from textwrap import dedent
 import time
 import uuid
+from contextlib import contextmanager
 
 import distro
 import jinja2
@@ -123,19 +124,22 @@ class TemplatedDictionary(MutableMapping):
         '''
         self.__dict__.update(*args, **kwargs)
 
-        self._aliases = {}
+        self.__aliases = {}
         if alias_spec:
             for aliased_to, aliases in alias_spec.items():
                 for alias in aliases:
-                    self._aliases[alias] = aliased_to
+                    self.__aliases[alias] = aliased_to
+
+        # by default the expansion is disabled
+        self.__jinja_expand = False
 
     # The next five methods are requirements of the ABC.
     def __setitem__(self, key, value):
-        key = self._aliases.get(key, key)
+        key = self.__aliases.get(key, key)
         self.__dict__[key] = value
     def __getitem__(self, key):
-        key = self._aliases.get(key, key)
-        if '__jinja_expand' in self.__dict__ and self.__dict__['__jinja_expand']:
+        key = self.__aliases.get(key, key)
+        if self.__jinja_expand:
             return self.__render_value(self.__dict__[key])
         return self.__dict__[key]
     def __delitem__(self, key):
@@ -154,10 +158,52 @@ class TemplatedDictionary(MutableMapping):
                                                     self.__dict__)
     def copy(self):
         return TemplatedDictionary(self.__dict__)
+
+    def copy_subdict(self, key):
+        return TemplatedDictionary(self.__dict__[key])
+
+    def enable_jinja(self, enable=True):
+        """
+        Turn on jinja2 template processing.  When accessing data in the
+        self.__dict__ "tree" structure the returned data will have expanded
+        jinja templates.
+
+        But since then, doing second-level assignments like
+
+            >>> config_opts['a']['b'] = 'c'
+
+        will have no effect, because config_opts['a'] getter returns data in
+        newly allocated storage.  So it's desired to turn the configuration
+        to readable mode once everything is loaded from configuration files.
+        The top-level config options like
+
+            >>> config_opts['top_level'] = 'x'
+
+        are still modifiable.
+        """
+        self.__jinja_expand = True
+
+    @contextmanager
+    def unexpanded(self):
+        """
+        Sometimes, even after enable_jinja() call, we might want to access
+        the items in the raw form.  Use this context manager to flip the
+        internal state so it doesn't expand, and later flip back to previous
+        state.
+        """
+        old = self.__jinja_expand
+        self.__jinja_expand = False
+        yield
+        self.__jinja_expand = old
+
     def __render_value(self, value):
         if isinstance(value, str):
             return self.__render_string(value)
         elif isinstance(value, list):
+            if self.__jinja_expand:
+                # return unmodifiable, separate storage
+                return [self.__render_value(item) for item in value]
+
             # we cannot use list comprehension here, as we need to NOT modify the list (pointer to list)
             # and we need to modifiy only individual values in the list
             # If we would create new list, we cannot assign to it, which often happens in configs (e.g. plugins)
@@ -165,7 +211,12 @@ class TemplatedDictionary(MutableMapping):
                 value[i] = self.__render_value(value[i])
             return value
         elif isinstance(value, dict):
+            if self.__jinja_expand:
+                return {key: self.__render_value(value[key]) for key in value.keys()}
+
             # we cannot use list comprehension here, same reasoning as for `list` above
+            # TODO: should we expand keys like this?
+            #       config_opts['{{ package_manager }}.conf'] += ...
             for k in value.keys():
                 value[k] = self.__render_value(value[k])
             return value
@@ -1595,7 +1646,7 @@ def load_config(config_path, name, uidManager, version, pkg_python_dir):
 
     # Now when all options are correctly loaded from config files, turn the
     # jinja templating ON.
-    config_opts['__jinja_expand'] = True
+    config_opts.enable_jinja()
 
     # use_bootstrap_container is deprecated option
     if 'use_bootstrap_container' in config_opts:

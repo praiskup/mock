@@ -541,19 +541,22 @@ def check_arch_combination(target_arch, config_opts):
 
 @traceLog()
 def do_debugconfig(config_opts, uidManager):
-    jinja_expand = config_opts['__jinja_expand']
     defaults = util.load_defaults(uidManager, __VERSION__, PKGPYTHONDIR)
-    defaults['__jinja_expand'] = False
-    config_opts['__jinja_expand'] = False
+    assert not defaults.__jinja_expand
+    assert defaults.__jinja_expand
+
     for key in sorted(config_opts):
-        if key == '__jinja_expand':
-            value = jinja_expand
-        else:
-            value = config_opts[key]
-        if (key in defaults) and (key in config_opts) and (config_opts[key] != defaults[key]) or \
-           (key not in defaults):
+        if key.startswith('_TemplatedDictionary'):
+            # these private things don't have to be in the output
+            continue
+
+        with config_opts.unexpanded():
+            value = defaults[key]
+            if key in defaults and value == config_opts[key]:
+                # don't create large output with defaults
+                continue
+
             print("config_opts['{}'] = {}".format(key, pformat(value)))
-    config_opts['__jinja_expand'] = jinja_expand
 
 @traceLog()
 def rootcheck():
@@ -694,6 +697,7 @@ def main():
     if config_opts['use_bootstrap']:
         # first take a copy of the config so we can make some modifications
         bootstrap_buildroot_config = config_opts.copy()
+
         # copy plugins configuration so we get a separate deep copy
         bootstrap_buildroot_config['plugin_conf'] = \
             copy.deepcopy(config_opts['plugin_conf'])  # pylint: disable=no-member
@@ -716,6 +720,8 @@ def main():
 
         # disable updating bootstrap chroot
         bootstrap_buildroot_config['update_before_build'] = False
+
+        bootstrap_buildroot_config.enable_jinja()
 
         bootstrap_buildroot_state = State(bootstrap=True)
         bootstrap_plugins = Plugins(bootstrap_buildroot_config, bootstrap_buildroot_state)
