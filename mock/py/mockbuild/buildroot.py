@@ -77,8 +77,9 @@ class Buildroot(object):
         self.pkg_manager = package_manager(config, self, plugins, bootstrap_buildroot)
         self.mounts = mounts.Mounts(self)
 
-        self.root_log = getLog("mockbuild")
-        self.build_log = getLog("mockbuild.Root.build")
+        bootstrap_log_redirect = "bootstrap" if is_bootstrap else None
+        self.root_log = getLog(bootstrap_log_redirect or "mockbuild")
+        self.build_log = getLog(bootstrap_log_redirect or "mockbuild.Root.build")
         self.logging_initialized = False
         self.chroot_was_initialized = False
         self.preexisting_deps = []
