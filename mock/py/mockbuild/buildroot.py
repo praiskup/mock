@@ -23,6 +23,7 @@ from .package_manager import package_manager
 from .trace_decorator import getLog, traceLog
 from .podman import Podman
 
+MOCK_LOG_DESTDIR = None
 
 def noop_in_bootstrap(f):
     def wrapper(self, *args, **kwargs):
@@ -77,10 +78,14 @@ class Buildroot(object):
         self.pkg_manager = package_manager(config, self, plugins, bootstrap_buildroot)
         self.mounts = mounts.Mounts(self)
 
-        bootstrap_log_redirect = "bootstrap" if is_bootstrap else None
-        self.root_log = getLog(bootstrap_log_redirect or "mockbuild")
-        self.build_log = getLog(bootstrap_log_redirect or "mockbuild.Root.build")
-        self.logging_initialized = False
+        # setup shortcuts to loggers
+        if not is_bootstrap:
+            self.root_log = getLog("mockbuild")
+            self.build_log = getLog("mockbuild.Root.build")
+        else:
+            # build_log is not neeeded
+            self.root_log = getLog("bootstrap")
+
         self.chroot_was_initialized = False
         self.preexisting_deps = []
         self.plugins.init_plugins(self)
@@ -371,26 +376,42 @@ class Buildroot(object):
                     f.write(l + '\n')
 
     @traceLog()
-    def _resetLogging(self, force=False):
+    def _resetLogging(self):
+        """
+        Reset loggers' handlers to put logs to correct (current) resultdir.
+        TODO: This should be method in commands().  We currently run this
+              twice, both for bootstrap and normal buildroot.
+        """
+
         # ensure we dont attach the handlers multiple times.
-        if self.logging_initialized and not force:
+        global MOCK_LOG_DESTDIR  # pylint: disable=global-statement
+        if self.resultdir == MOCK_LOG_DESTDIR:
             return
-        self.logging_initialized = True
 
         with self.uid_manager:
             util.mkdirIfAbsent(self.resultdir)
             # attach logs to log files.
             # This happens in addition to anything that
             # is set up in the config file... ie. logs go everywhere
-            for (log, filename, fmt_str) in (
-                    (self.state.state_log, "state.log", self.config['state_log_fmt_str']),
-                    (self.build_log, "build.log", self.config['build_log_fmt_str']),
-                    (self.root_log, "root.log", self.config['root_log_fmt_str'])):
+
+            for (logname, filename, fmt_str) in (
+                    ("mockbuild.Root.state", "state.log", self.config['state_log_fmt_str']),
+                    ("mockbuild.Root.build", "build.log", self.config['build_log_fmt_str']),
+                    ("bootstrap", "bootstrap.log", self.config['bootstrap_log_fmt_str']),
+                    ("mockbuild", "root.log", self.config['root_log_fmt_str'])):
+
+                if logname == "bootstrap" and 'use_bootstrap_container' not in self.config:
+                    # we don't create bootstrap.log when not necessary
+                    continue
+
                 # release used FileHandlers if re-initializing to not leak FDs
-                if force:
-                    for handler in log.handlers[:]:
-                        handler.close()
-                        log.removeHandler(handler)
+                log = getLog(logname)
+                for handler in log.handlers[:]:  # iterate on copy!
+                    if not isinstance(handler, logging.FileHandler):
+                        continue
+                    handler.close()
+                    log.removeHandler(handler)
+
                 fullPath = os.path.join(self.resultdir, filename)
                 fh = logging.FileHandler(fullPath, "a+")
                 formatter = logging.Formatter(fmt_str)
@@ -398,6 +419,9 @@ class Buildroot(object):
                 fh.setLevel(logging.NOTSET)
                 log.addHandler(fh)
                 log.info("Mock Version: %s", self.config['version'])
+
+        MOCK_LOG_DESTDIR = self.resultdir
+
 
     @traceLog()
     def _init_aux_files(self):
