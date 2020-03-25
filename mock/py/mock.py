@@ -467,7 +467,8 @@ def setup_logging(config_path, config_opts, options):
         # no need to complicate our live with additional config
         bootstrap_fmt_name = config_opts.get('bootstrap_log_fmt_name',
                                              config_opts['root_log_fmt_name'])
-        config_opts['bootstrap_log_fmt_str'] = log_cfg.get("formatter_%s" % bootstrap_fmt_name)
+        config_opts['bootstrap_log_fmt_str'] = log_cfg.get(
+                "formatter_%s" % bootstrap_fmt_name, "format", raw=1)
 
     except configparser.NoSectionError as exc:
         log.error("Log config file (%s) missing required section: %s", log_ini, exc)

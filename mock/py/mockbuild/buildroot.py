@@ -400,7 +400,7 @@ class Buildroot(object):
                     ("bootstrap", "bootstrap.log", self.config['bootstrap_log_fmt_str']),
                     ("mockbuild", "root.log", self.config['root_log_fmt_str'])):
 
-                if logname == "bootstrap" and 'use_bootstrap_container' not in self.config:
+                if logname == "bootstrap" and 'use_bootstrap' not in self.config:
                     # we don't create bootstrap.log when not necessary
                     continue
 
