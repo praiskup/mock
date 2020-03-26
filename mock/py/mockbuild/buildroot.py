@@ -418,7 +418,7 @@ class Buildroot(object):
                 fh.setFormatter(formatter)
                 fh.setLevel(logging.NOTSET)
                 log.addHandler(fh)
-                log.info("Mock Version: %s", self.config['version'])
+                log.info("Mock Version (%s): %s", logname, self.config['version'])
 
         MOCK_LOG_DESTDIR = self.resultdir
 
