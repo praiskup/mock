@@ -418,7 +418,13 @@ class Buildroot(object):
                 fh.setFormatter(formatter)
                 fh.setLevel(logging.NOTSET)
                 log.addHandler(fh)
-                log.info("Mock Version (%s): %s", logname, self.config['version'])
+
+                # identify mock version as first line in log
+                first_line_logger = logging.getLogger('first_line_logger')
+                first_line_logger.propagate = 0  # we don't want this on stderr
+                first_line_logger.addHandler(fh)
+                first_line_logger.info("Mock Version: %s", self.config['version'])
+                first_line_logger.removeHandler(fh)
 
         MOCK_LOG_DESTDIR = self.resultdir
 
