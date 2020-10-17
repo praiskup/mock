@@ -21,7 +21,7 @@ from . import file_util
 from . import text
 from . import util
 from .file_downloader import FileDownloader
-from .exception import PkgError, Error, RootError, BuildError
+from .exception import PkgError, Error, RootError, BuildError, ExternalDepsError
 from .trace_decorator import getLog, traceLog
 from .rebuild import do_rebuild
 
@@ -225,6 +225,76 @@ class Commands(object):
         finally:
             self.uid_manager.restorePrivs()
 
+    # when python 3.9 becomes standard, this can be replaced by string.removeprefix()
+    @classmethod
+    def _remove_prefix(cls, intext, prefix):
+        if intext.startswith(prefix):
+            return intext[len(prefix):]
+        return intext
+
+    @traceLog()
+    def install_external_deps(self, deps):
+        """Install dependencies using native library manager"""
+        prefix = 'external:pypi:'
+        pypi_deps = [self._remove_prefix(i, prefix) for i in deps if i.startswith(prefix)]
+        deps = [i for i in deps if not i.startswith(prefix)]
+        self.buildroot.root_log.info('Installing dependencies to satisfy external:*')
+        if pypi_deps:
+            self.install_external_deps_pypi(pypi_deps)
+
+        if deps:
+            raise ExternalDepsError("Unknown external dependencies: {}".format(', ', deps))
+
+    @traceLog()
+    def install_external_deps_pypi(self, deps):
+        """ deps is list of python modules. Without the prefix. """
+        self.bootstrap_buildroot.install_as_root('/usr/bin/pip3', 'python3-setuptools')
+        command = ['pip3', "install", "--root", self.buildroot.make_chroot_path() ] + deps
+        self.bootstrap_buildroot.root_log.info("Executing %s", util.cmd_pretty(command))
+        try:
+            self.uid_manager.becomeUser(0, 0)
+            self.bootstrap_buildroot.doChroot(
+                command, shell=False,
+                nspawn_args=self._get_nspawn_args(),
+                #uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
+                #user=self.buildroot.chrootuser,
+                # enabling network here temporary
+                unshare_net=False,
+                returnOutput=True,
+                returnStderr=True, raiseExc=True)
+        except:
+            raise Error('Pip3 install failed')
+        finally:
+            self.uid_manager.restorePrivs()
+        self.install_fake_rpm('pypi', deps)
+
+    @traceLog()
+    def install_fake_rpm(self, external_type, deps):
+        """ Create and install fake packages using create-fake-rpm """
+        list_of_packages = []
+        self.buildroot.install_as_root('create-fake-rpm')
+        try:
+            self.uid_manager.becomeUser(0, 0)
+            for dep in deps:
+                command = ["bash", "--login", "-c", '/usr/bin/create-fake-rpm', '--print-result',
+                           '--build',
+                           'external-{0}-{1}'.format(external_type, dep),
+                           'external:{0}:{1}'.format(external_type, dep)]
+                (output, _) = self.buildroot.doChroot(
+                    command, shell=False,
+                    uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
+                    user=self.buildroot.chrootuser,
+                    nspawn_args=self._get_nspawn_args(),
+                    unshare_net=self.private_network,
+                    returnOutput=True,
+                    printOutput=True,
+                    returnStderr=False, raiseExc=True)
+                package = output.split()[0]
+                list_of_packages.append(package)
+        finally:
+            self.uid_manager.restorePrivs()
+        self.buildroot.install_as_root(list_of_packages)
+
     @traceLog()
     def _show_installed_packages(self):
         '''report the installed packages in the chroot to the root log'''
@@ -282,6 +352,14 @@ class Commands(object):
             if dynamic_buildreqs and not self.config.get('dynamic_buildrequires'):
                 raise Error('DynamicBuildRequires are found but support is disabled.'
                             ' See "dynamic_buildrequires" in config_opts.')
+
+            external_deps = [i for i in requires if i.startswith('external:')]
+            if external_deps:
+                if self.config.get('external_buildrequires'):
+                    self.install_external_deps(external_deps)
+                else:
+                    raise Error('ExternalBuildRequires are found but support is disabled.'
+                                ' See "external_buildrequires" in config_opts.')
 
             self.installSrpmDeps(rebuilt_srpm)
             self.state.finish(buildsetup)

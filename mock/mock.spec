@@ -74,6 +74,7 @@ Recommends: dnf-utils
 Suggests: qemu-user-static
 Suggests: procenv
 Suggests: podman
+Suggests: create-fake-rpm
 %else
 %if 0%{?rhel} == 7
 Requires: btrfs-progs
