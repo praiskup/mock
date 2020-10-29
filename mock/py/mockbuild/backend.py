@@ -250,18 +250,9 @@ class Commands(object):
         """ deps is list of python modules. Without the prefix. """
         self.bootstrap_buildroot.install_as_root('/usr/bin/pip3', 'python3-setuptools')
         command = ['pip3', "install", "--root", self.buildroot.make_chroot_path() ] + deps
-        self.bootstrap_buildroot.root_log.info("Executing %s", util.cmd_pretty(command))
         try:
             self.uid_manager.becomeUser(0, 0)
-            self.bootstrap_buildroot.doChroot(
-                command, shell=False,
-                nspawn_args=self._get_nspawn_args(),
-                #uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
-                #user=self.buildroot.chrootuser,
-                # enabling network here temporary
-                unshare_net=False,
-                returnOutput=True,
-                returnStderr=True, raiseExc=True)
+            self.bootstrap_buildroot.doOutChroot(command, shell=False, printOutput=True)
         except:
             raise Error('Pip3 install failed')
         finally:
