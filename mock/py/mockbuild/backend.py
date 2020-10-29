@@ -267,19 +267,15 @@ class Commands(object):
         try:
             self.uid_manager.becomeUser(0, 0)
             for dep in deps:
-                command = ["bash", "--login", "-c", '/usr/bin/create-fake-rpm', '--print-result',
+                command = ['/usr/bin/create-fake-rpm', '--print-result',
                            '--build',
                            'external-{0}-{1}'.format(external_type, dep),
                            'external:{0}:{1}'.format(external_type, dep)]
+                # The output here is:
+                # Wrote: /fake-external-pypi-bokeh-0-0.noarch.rpm\n
                 (output, _) = self.buildroot.doChroot(
-                    command, shell=False,
-                    uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
-                    user=self.buildroot.chrootuser,
-                    nspawn_args=self._get_nspawn_args(),
-                    unshare_net=self.private_network,
-                    returnOutput=True,
-                    printOutput=True,
-                    returnStderr=False, raiseExc=True)
+                        command, returnOutput=True, returnStderr=False,
+                        raiseExc=True)
                 package = output.split()[0]
                 list_of_packages.append(package)
         finally:
