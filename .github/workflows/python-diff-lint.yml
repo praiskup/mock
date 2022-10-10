@@ -1,0 +1,31 @@
+---
+name: Python linting differential scan
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  container-python-lint-job:
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:37
+    steps:
+      - name: install the needed Fedora packages
+        run: dnf install -y csdiff dnf-plugins-core pylint
+
+      - name: enable external Copr repo with diff linter
+        run: dnf -y copr enable @copr/vcs-diff-lint
+
+      - name: enable external Copr repo with diff linter
+        run: dnf -y install vcs-diff-lint
+
+      - uses: actions/checkout@v3
+
+      - name: avoid Git permissions warnings, we are read only
+        run: git config --global --add safe.directory '*'
+
+      - name: get the original code so we can diff
+        run: git fetch origin main:main
+
+      - name: run the diff linter
+        run: cd mock && vcs-diff-lint --print-fixed-errors
