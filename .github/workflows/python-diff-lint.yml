@@ -27,5 +27,8 @@ jobs:
       - name: get the original code so we can diff
         run: git fetch origin main:main
 
+      - name: list, todo drop
+        run: git branch -a && echo == && git remote
+
       - name: run the diff linter
         run: cd mock && vcs-diff-lint --print-fixed-errors
