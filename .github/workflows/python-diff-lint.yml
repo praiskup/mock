@@ -19,7 +19,7 @@ jobs:
       - name: enable external Copr repo with diff linter
         run: dnf -y install vcs-diff-lint
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: avoid Git permissions warnings, we are read only
         run: git config --global --add safe.directory '*'
