@@ -54,6 +54,7 @@ import os
 import os.path
 import signal
 import shutil
+import shlex
 import sys
 import time
 import copy
@@ -703,9 +704,10 @@ def main():
 
     # do whatever we're here to do
     py_version = '{0}.{1}.{2}'.format(*sys.version_info[:3])
-    log.info("mock.py version %s starting (python version = %s%s)...",
+    log.info("mock.py version %s starting (python version = %s%s), args: %s",
              VERSION, py_version,
-             "" if not _MOCK_NVR else ", NVR = " + _MOCK_NVR)
+             "" if not _MOCK_NVR else ", NVR = " + _MOCK_NVR,
+             " ".join(shlex.quote(x) for x in sys.argv))
     state = State()
     plugins = Plugins(config_opts, state)
 
@@ -797,6 +799,9 @@ def main():
     log.info("Signal handler active")
     commands = Commands(config_opts, uidManager, plugins, state, buildroot, bootstrap_buildroot)
 
+    # TODO: The printrootpath and list_snapshots logic escape the finalization
+    # like 'bootstrap.finalize()' or 'state.alldone()'.  Move it into
+    # run_command().
     state.start("run")
 
     if options.printrootpath:
@@ -828,7 +833,10 @@ def main():
 
     result = 0
     try:
-        result = run_command(options, args, config_opts, commands, buildroot, state)
+        result = run_command(options, args, config_opts, commands, buildroot)
+        # finish state.log if no exception was raised in run_command()
+        state.finish("run")
+        state.alldone()
     finally:
         buildroot.finalize()
         if bootstrap_buildroot is not None:
@@ -837,7 +845,7 @@ def main():
 
 
 @traceLog()
-def run_command(options, args, config_opts, commands, buildroot, state):
+def run_command(options, args, config_opts, commands, buildroot):
     result = 0
     # TODO separate this
     # Fetch and prepare sources from SCM
@@ -1054,8 +1062,6 @@ def run_command(options, args, config_opts, commands, buildroot, state):
             buildroot.bootstrap_buildroot.plugins.call_hooks('mount_root')
 
     buildroot.nuke_rpm_db()
-    state.finish("run")
-    state.alldone()
     return result
 
 
