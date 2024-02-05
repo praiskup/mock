@@ -1,3 +1,9 @@
+[tool.changelog-bot]
+    [tool.changelog-bot.towncrier_changelog]
+        enabled = true
+        verify_pr_number = true
+        changelog_skip_label = "no-changelog-entry-needed"
+
 [tool.towncrier]
 # we post-process this file with releng/generate-release-notes
 filename = ".Release-Notes-Next.md"
