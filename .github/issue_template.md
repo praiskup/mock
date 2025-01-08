@@ -1,16 +1,16 @@
-### Short description of the problem
+< Describe the problem here >
 
-### Output of `rpm -q mock`
+*Output of `rpm -q mock mock-core-configs`:*
 
 OUTPUT HERE
 
-### Steps to reproduce issue
+*Steps to reproduce issue:*
 
 1.
 2.
 3.
 
-Do not forget to mention full commandline with the mock command you executed.
+Do not forget to include the full command line of the Mock command you executed.
 
 ### Any additional notes
 
