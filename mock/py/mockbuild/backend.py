@@ -6,6 +6,7 @@
 # Major reorganization and adaptation by Michael Brown
 # Copyright (C) 2007 Michael E Brown <mebrown@michaels-house.net>
 
+from contextlib import contextmanager
 import glob
 import os
 import shutil
@@ -15,7 +16,7 @@ import getpass
 
 # 3rd party imports
 import rpm
-from mockbuild.mounts import BindMountPoint
+from mockbuild.mounts import BindMountPoint, FileSystemMountPoint
 
 from . import file_util
 from . import text
@@ -60,7 +61,7 @@ class Commands(object):
         self.no_root_shells = config['no_root_shells']
 
         self.private_network = not config['rpmbuild_networking']
-        self.rpmbuild_noclean_option = None
+        self._rpmbuild_help = None
 
         # on-demand buildroot properties
         # spec path in buildroot
@@ -665,29 +666,37 @@ class Commands(object):
             raise PkgError("Source RPM is not installable:\n{0}".format(output))
 
 
+    def _rpmbuild_help_output(self):
+        """
+        Run rpmbuild --help once in the chroot and return (cached) output.
+        Used to detect optional flags like --noclean and -bk.
+        """
+        if self._rpmbuild_help is None:
+            output, _ = self.buildroot.doChroot(
+                    "rpmbuild --help",
+                    shell=True, raiseExc=False, returnOutput=True,
+            )
+            self._rpmbuild_help = output or ""
+        return self._rpmbuild_help
+
     @property
     def _rpmbuild_noclean_option(self):
         """
-        Detect and cache if rpmbuild in buildroot supports the --noclean
-        option.  Return "--noclean" string if supported, otherwise return an
-        empty string.
+        Return "--noclean" if rpmbuild supports it, otherwise "".
 
-        TODO: Remove this method once nobody is building for RHEL 6.
+        TODO: Remove --noclean detection once nobody is building for RHEL 6.
         """
         if self.config["cleanup_on_success"]:
             return ""
+        if "--noclean" in self._rpmbuild_help_output():
+            return "--noclean"
+        return ""
 
-        if self.rpmbuild_noclean_option is not None:
-            return self.rpmbuild_noclean_option
-
-        self.rpmbuild_noclean_option = ""
-        _, status = self.buildroot.doChroot(
-                "case $(rpmbuild --help) in *--noclean*) exit 0; esac; exit 1",
-                shell=True, raiseExc=False
-        )
-        if not status:
-            self.rpmbuild_noclean_option = "--noclean"
-        return self.rpmbuild_noclean_option
+    @property
+    def _rpmbuild_supports_bk(self):
+        """True if rpmbuild supports -bk for separate %check (rpm >= 6.0.91)."""
+        # leading space to minimize chances for clash
+        return " -bk" in self._rpmbuild_help_output()
 
 
     @traceLog()
@@ -712,13 +721,80 @@ class Commands(object):
                                                                       self.buildroot.builddir)))
         return results[0]
 
+    def _resolve_separate_check(self, check):
+        """
+        Decide whether to use separate %check phase based on config and
+        rpmbuild capabilities.  Returns True if we should split the build.
+        """
+        separate_check = self.config.get('separate_check')
+        if separate_check in (None, False, 'off') or not check:
+            return False
+
+        if separate_check not in ('best_effort', 'enforce'):
+            raise Error(
+                f"Invalid separate_check value: {separate_check}.  "
+                "Valid values are 'off', 'best_effort', 'enforce'")
+
+        supports_bk = self._rpmbuild_supports_bk
+        if separate_check == 'enforce' and not supports_bk:
+            raise Error(
+                "separate_check='enforce' requires rpmbuild with -bk support"
+                " (rpm >= 6.0.91)")
+
+        if separate_check == 'best_effort' and not supports_bk:
+            self.buildroot.build_log.warning(
+                "rpmbuild does not support -bk, falling back to"
+                " monolithic build with %check inline")
+            return False
+
+        return True
+
+    @staticmethod
+    @contextmanager
+    def _protect_artifact_dirs(bd_out):
+        """Hide RPMS/ and SRPMS/ under a tmpfs overlay so %check cannot modify built artifacts."""
+        getLog().info("Protecting built artifacts in RPMS/ and SRPMS/ with tmpfs overlay")
+        mounted = []
+        try:
+            for subdir in ('RPMS', 'SRPMS'):
+                # Let mount() fail the build if the directory does not exist.
+                artifact_dir = os.path.join(bd_out, subdir)
+                mount = FileSystemMountPoint(
+                    path=artifact_dir, filetype='tmpfs',
+                    options='size=1m')
+                mount.mount()
+                mounted.append(mount)
+            yield
+        finally:
+            for mp in mounted:
+                mp.umount()
+
+    def _run_separate_check(self, get_command, bd_out, timeout):
+        """Run %check as an isolated rpmbuild -bk --short-circuit phase."""
+        getLog().info("Running %check as a separate phase (rpmbuild -bk --short-circuit)")
+        command = get_command(['-bk', '--short-circuit'], with_check=True)
+        with self._protect_artifact_dirs(bd_out):
+            self.buildroot.doChroot(
+                command,
+                shell=False, logger=self.buildroot.build_log, timeout=timeout,
+                uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
+                user=self.buildroot.chrootuser,
+                unshare_net=self.private_network,
+                printOutput=self.config['print_main_output'])
+
     @traceLog()
     def rebuild_package(self, spec_path, timeout, check, dynamic_buildrequires):
         # --nodeps because rpm in the root may not be able to read rpmdb
         # created by rpm that created it (outside of chroot)
         check_opt = []
         calculatedeps = self.config["calculatedeps"]
-        if not check:
+        do_separate_check = self._resolve_separate_check(check)
+        if do_separate_check:
+            getLog().info("Skipping %check in main build; it will run as a separate phase later")
+            check_opt += ["--nocheck"]
+        elif check:
+            getLog().info("Running %check inline with the main build")
+        elif not check:
             # this is because EL5/6 does not know --nocheck
             # when EL5/6 targets are not supported, replace it with --nocheck
             check_opt += ["--define", "'__spec_check_template exit 0; '"]
@@ -735,12 +811,15 @@ class Commands(object):
         if additional_opts == ['']:
             additional_opts = []
 
-        def get_command(mode, checkdeps=False):
+        def get_command(mode, checkdeps=False, with_check=False):
             nodeps_opt = [] if checkdeps else ['--nodeps']
+            # check_opt contains --nocheck or equivalent; drop it when we
+            # explicitly want to run %check (separate check phase).
+            effective_check_opt = [] if with_check else check_opt
             command = [self.config['rpmbuild_command']] + mode + \
                       [self._rpmbuild_noclean_option] + \
                       ['--target', self.rpmbuild_arch] + nodeps_opt + \
-                      check_opt + [spec_path] + additional_opts
+                      effective_check_opt + [spec_path] + additional_opts
             command = ["bash", "--login", "-c"] + [' '.join(command)]
             return command
 
@@ -813,6 +892,10 @@ class Commands(object):
                                     user=self.buildroot.chrootuser,
                                     unshare_net=self.private_network,
                                     printOutput=self.config['print_main_output'])
+
+            if do_separate_check:
+                self._run_separate_check(get_command, bd_out, timeout)
+
         results = glob.glob(bd_out + '/RPMS/*.rpm')
         results += glob.glob(bd_out + '/SRPMS/*.rpm')
         self.buildroot.final_rpm_list = [os.path.basename(result) for result in results]
