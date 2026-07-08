@@ -1079,7 +1079,25 @@ class Buildroot(object):
 
         return util.BindMountedFile(chroot_filename, host_filename)
 
-    @traceLog()
+    @contextmanager
+    def protect_artifact_dirs(self):
+        """Hide RPMS/ and SRPMS/ under a tmpfs overlay so %check cannot modify built artifacts."""
+        chroot_builddir = self.make_chroot_path(self.builddir)
+        getLog().info("Protecting built artifacts in RPMS/ and SRPMS/ with tmpfs overlay")
+        mounted = []
+        try:
+            for subdir in ('RPMS', 'SRPMS'):
+                artifact_dir = os.path.join(chroot_builddir, subdir)
+                mount = mounts.FileSystemMountPoint(
+                    path=artifact_dir, filetype='tmpfs',
+                    options='size=1m')
+                mount.mount()
+                mounted.append(mount)
+            yield
+        finally:
+            for mp in mounted:
+                mp.umount()
+
     def backup_build_results(self):
         """
         Back up built RPMs if `backup_on_clean` is enabled, before cleaning the chroot and results.

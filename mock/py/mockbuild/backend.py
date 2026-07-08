@@ -6,7 +6,6 @@
 # Major reorganization and adaptation by Michael Brown
 # Copyright (C) 2007 Michael E Brown <mebrown@michaels-house.net>
 
-from contextlib import contextmanager
 import glob
 import os
 import shutil
@@ -16,7 +15,7 @@ import getpass
 
 # 3rd party imports
 import rpm
-from mockbuild.mounts import BindMountPoint, FileSystemMountPoint
+from mockbuild.mounts import BindMountPoint
 
 from . import file_util
 from . import text
@@ -31,33 +30,33 @@ from .rebuild import do_rebuild
 class RpmBuild:
     """Thin wrapper for running rpmbuild inside a Mock chroot."""
 
+    _rpmbuild_help_cache = None
+
     def __init__(self, buildroot, config, spec_path):
         self._buildroot = buildroot
         self._config = config
         self._spec_path = spec_path
-        self._rpmbuild_command = config['rpmbuild_command']
-        self._arch = config['rpmbuild_arch']
-        self._private_network = not config['rpmbuild_networking']
-        extra = config.get('rpmbuild_opts', '')
-        self._extra_opts = [extra] if extra else []
-        self._timeout = config['rpmbuild_timeout']
-        self._rpmbuild_help = None
         self._resolve_check_flags()
 
     @property
     def _rpmbuild_help_output(self):
         """Run rpmbuild --help once in the chroot and return (cached) output."""
-        if self._rpmbuild_help is None:
+        if RpmBuild._rpmbuild_help_cache is None:
             output, _ = self._buildroot.doChroot(
                 "rpmbuild --help",
                 shell=True, raiseExc=False, returnOutput=True,
             )
-            self._rpmbuild_help = output or ""
-        return self._rpmbuild_help
+            RpmBuild._rpmbuild_help_cache = output or ""
+        return RpmBuild._rpmbuild_help_cache
 
     @property
     def noclean_option(self):
-        """Return ["--noclean"] if rpmbuild supports it, otherwise []."""
+        """
+        Return ["--noclean"] if rpmbuild supports it, otherwise [].
+
+        TODO: --noclean is not supported on EL6, remove this method once nobody
+              is building for RHEL 6.  See #954.
+        """
         if self._config["cleanup_on_success"]:
             return []
         if "--noclean" in self._rpmbuild_help_output:
@@ -71,7 +70,10 @@ class RpmBuild:
 
     @property
     def _nocheck_option(self):
-        """Return ["--nocheck"] if rpmbuild supports it, or a fallback for EL5/6."""
+        """
+        EL5/6 does not know --nocheck, so there we use alternative macro override.
+        TODO: Remove when nobody needs to build for EL6.
+        """
         if "--nocheck" in self._rpmbuild_help_output:
             return ["--nocheck"]
         return ["--define", "'__spec_check_template exit 0; '"]
@@ -113,17 +115,21 @@ class RpmBuild:
     def run(self, args, checkdeps=False, raiseExc=True):
         """Run rpmbuild with given args in the chroot."""
         nodeps = [] if checkdeps else ['--nodeps']
-        command = ([self._rpmbuild_command] + args
+        extra = self._config.get('rpmbuild_opts', '')
+        extra_opts = [extra] if extra else []
+        command = ([self._config['rpmbuild_command']] + args
                    + self.noclean_option
-                   + ['--target', self._arch] + nodeps
-                   + [self._spec_path] + self._extra_opts)
+                   + ['--target', self._config['rpmbuild_arch']] + nodeps
+                   + [self._spec_path] + extra_opts)
         command = ["bash", "--login", "-c"] + [' '.join(command)]
         return self._buildroot.doChroot(
             command,
-            shell=False, logger=self._buildroot.build_log, timeout=self._timeout,
+            shell=False, logger=self._buildroot.build_log,
+            timeout=self._config['rpmbuild_timeout'],
             uid=self._buildroot.chrootuid, gid=self._buildroot.chrootgid,
             user=self._buildroot.chrootuser,
-            unshare_net=self._private_network, raiseExc=raiseExc,
+            unshare_net=not self._config['rpmbuild_networking'],
+            raiseExc=raiseExc,
             printOutput=self._config['print_main_output'])
 
     def run_build(self, args, checkdeps=False, raiseExc=True):
@@ -131,13 +137,13 @@ class RpmBuild:
         return self.run(args + self._check_related_flags,
                         checkdeps=checkdeps, raiseExc=raiseExc)
 
-    def run_separate_check(self, bd_out):
+    def run_separate_check(self):
         """Run %check as an isolated phase with artifact dirs protected."""
         if not self.use_separate_check:
             return
         getLog().info("Running %check as a separate phase"
                       " (rpmbuild -bk --short-circuit)")
-        with Commands._protect_artifact_dirs(bd_out):
+        with self._buildroot.protect_artifact_dirs():
             self.run(['-bk', '--short-circuit'])
 
 
@@ -790,26 +796,6 @@ class Commands(object):
                                                                       self.buildroot.builddir)))
         return results[0]
 
-    @staticmethod
-    @contextmanager
-    def _protect_artifact_dirs(bd_out):
-        """Hide RPMS/ and SRPMS/ under a tmpfs overlay so %check cannot modify built artifacts."""
-        getLog().info("Protecting built artifacts in RPMS/ and SRPMS/ with tmpfs overlay")
-        mounted = []
-        try:
-            for subdir in ('RPMS', 'SRPMS'):
-                # Let mount() fail the build if the directory does not exist.
-                artifact_dir = os.path.join(bd_out, subdir)
-                mount = FileSystemMountPoint(
-                    path=artifact_dir, filetype='tmpfs',
-                    options='size=1m')
-                mount.mount()
-                mounted.append(mount)
-            yield
-        finally:
-            for mp in mounted:
-                mp.umount()
-
     @traceLog()
     def rebuild_package(self, spec_path, dynamic_buildrequires):
         rpmbuild = RpmBuild(self.buildroot, self.config, spec_path)
@@ -824,6 +810,7 @@ class Commands(object):
             mode += ['--short-circuit']
 
         bd_out = self.make_chroot_path(self.buildroot.builddir)
+        # Are we going to skip the actual build (end after build requires resolution)?
         calculatedeps = self.config["calculatedeps"]
         dynamic_buildrequires = dynamic_buildrequires and self.config.get('dynamic_buildrequires')
         if dynamic_buildrequires:
@@ -882,7 +869,7 @@ class Commands(object):
         if not calculatedeps:
             checkdeps = dynamic_buildrequires and self.bootstrap_buildroot is not None
             rpmbuild.run_build(mode, checkdeps=checkdeps)
-            rpmbuild.run_separate_check(bd_out)
+            rpmbuild.run_separate_check()
 
         results = glob.glob(bd_out + '/RPMS/*.rpm')
         results += glob.glob(bd_out + '/SRPMS/*.rpm')

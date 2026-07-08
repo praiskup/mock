@@ -392,13 +392,13 @@ Requires rpm >= 6.0.91.  Valid values for \fIMODE\fR:
 .RS
 .TP
 .B best_effort
-Use separate %check when rpmbuild supports \-bk, fall back to inline otherwise.
+Use separate %check when rpmbuild supports \-bk, fall back to to normal order otherwise.
 .TP
 .B enforce
 Require \-bk support; fail if unavailable.
 .TP
 .B off
-Disabled, %check runs inline (default).
+Disabled, %check runs in normal order (default).
 .RE
 .TP
 \fB\-N\fR, \fB\-\-no\-cleanup\-after\fR
