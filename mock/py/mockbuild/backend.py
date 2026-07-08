@@ -47,7 +47,7 @@ class RpmBuild:
                 shell=True, raiseExc=False, returnOutput=True,
             )
             RpmBuild._rpmbuild_help_cache = output or ""
-        return RpmBuild._rpmbuild_help_cache
+        return str(RpmBuild._rpmbuild_help_cache)
 
     @property
     def noclean_option(self):

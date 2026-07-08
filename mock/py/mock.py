@@ -265,7 +265,7 @@ def command_parse():
     parser.add_option("--separate-check",
                       choices=['best_effort', 'enforce', 'off'],
                       default='off', dest="separate_check",
-                      help="Run %check as a separate rpmbuild phase using -bk.  "
+                      help="Run %%check as a separate rpmbuild phase using -bk.  "
                            "'best_effort' uses it when rpmbuild supports -bk, "
                            "falls back silently otherwise.  'enforce' fails if "
                            "rpmbuild does not support -bk (rpm >= 6.0.91).  "
