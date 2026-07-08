@@ -28,6 +28,119 @@ from .trace_decorator import getLog, traceLog
 from .rebuild import do_rebuild
 
 
+class RpmBuild:
+    """Thin wrapper for running rpmbuild inside a Mock chroot."""
+
+    def __init__(self, buildroot, config, spec_path):
+        self._buildroot = buildroot
+        self._config = config
+        self._spec_path = spec_path
+        self._rpmbuild_command = config['rpmbuild_command']
+        self._arch = config['rpmbuild_arch']
+        self._private_network = not config['rpmbuild_networking']
+        extra = config.get('rpmbuild_opts', '')
+        self._extra_opts = [extra] if extra else []
+        self._timeout = config['rpmbuild_timeout']
+        self._rpmbuild_help = None
+        self._resolve_check_flags()
+
+    @property
+    def _rpmbuild_help_output(self):
+        """Run rpmbuild --help once in the chroot and return (cached) output."""
+        if self._rpmbuild_help is None:
+            output, _ = self._buildroot.doChroot(
+                "rpmbuild --help",
+                shell=True, raiseExc=False, returnOutput=True,
+            )
+            self._rpmbuild_help = output or ""
+        return self._rpmbuild_help
+
+    @property
+    def noclean_option(self):
+        """Return ["--noclean"] if rpmbuild supports it, otherwise []."""
+        if self._config["cleanup_on_success"]:
+            return []
+        if "--noclean" in self._rpmbuild_help_output:
+            return ["--noclean"]
+        return []
+
+    @property
+    def supports_bk(self):
+        """True if rpmbuild supports -bk for separate %check (rpm >= 6.0.91)."""
+        return " -bk" in self._rpmbuild_help_output
+
+    @property
+    def _nocheck_option(self):
+        """Return ["--nocheck"] if rpmbuild supports it, or a fallback for EL5/6."""
+        if "--nocheck" in self._rpmbuild_help_output:
+            return ["--nocheck"]
+        return ["--define", "'__spec_check_template exit 0; '"]
+
+    def _resolve_check_flags(self):
+        """Set self.use_separate_check and self._check_related_flags based on config."""
+        self.use_separate_check = False
+
+        if not self._config['check']:
+            self._check_related_flags = self._nocheck_option
+            return
+
+        self._check_related_flags = []
+
+        separate_check = self._config.get('separate_check')
+        if separate_check in (None, False, 'off'):
+            getLog().info("Running %check as part of the main build")
+            return
+
+        if separate_check not in ('best_effort', 'enforce'):
+            raise Error(
+                f"Invalid separate_check value: {separate_check}.  "
+                "Valid values are 'off', 'best_effort', 'enforce'")
+
+        if not self.supports_bk:
+            if separate_check == 'enforce':
+                raise Error(
+                    "separate_check='enforce' requires rpmbuild with -bk support"
+                    " (rpm >= 6.0.91)")
+            self._buildroot.build_log.warning(
+                "rpmbuild does not support -bk, falling back to"
+                " monolithic build with %check included")
+            return
+
+        getLog().info("Skipping %check in main build; it will run as a separate phase later")
+        self._check_related_flags = self._nocheck_option
+        self.use_separate_check = True
+
+    def run(self, args, checkdeps=False, raiseExc=True):
+        """Run rpmbuild with given args in the chroot."""
+        nodeps = [] if checkdeps else ['--nodeps']
+        command = ([self._rpmbuild_command] + args
+                   + self.noclean_option
+                   + ['--target', self._arch] + nodeps
+                   + [self._spec_path] + self._extra_opts)
+        command = ["bash", "--login", "-c"] + [' '.join(command)]
+        return self._buildroot.doChroot(
+            command,
+            shell=False, logger=self._buildroot.build_log, timeout=self._timeout,
+            uid=self._buildroot.chrootuid, gid=self._buildroot.chrootgid,
+            user=self._buildroot.chrootuser,
+            unshare_net=self._private_network, raiseExc=raiseExc,
+            printOutput=self._config['print_main_output'])
+
+    def run_build(self, args, checkdeps=False, raiseExc=True):
+        """Run rpmbuild with check-related flags automatically appended."""
+        return self.run(args + self._check_related_flags,
+                        checkdeps=checkdeps, raiseExc=raiseExc)
+
+    def run_separate_check(self, bd_out):
+        """Run %check as an isolated phase with artifact dirs protected."""
+        if not self.use_separate_check:
+            return
+        getLog().info("Running %check as a separate phase"
+                      " (rpmbuild -bk --short-circuit)")
+        with Commands._protect_artifact_dirs(bd_out):
+            self.run(['-bk', '--short-circuit'])
+
+
 class Commands(object):
     """Executes mock commands in the buildroot"""
 
@@ -61,7 +174,6 @@ class Commands(object):
         self.no_root_shells = config['no_root_shells']
 
         self.private_network = not config['rpmbuild_networking']
-        self._rpmbuild_help = None
 
         # on-demand buildroot properties
         # spec path in buildroot
@@ -250,7 +362,7 @@ class Commands(object):
     #       -> except hooks. :)
     #
     @traceLog()
-    def build(self, srpm, timeout, check=True, spec=None):
+    def build(self, srpm, spec=None):
         """build an srpm into binary rpms, capture log"""
 
         # tell caching we are building
@@ -283,7 +395,7 @@ class Commands(object):
             max_loops = int(self.config.get('static_buildrequires_max_loops'))
             for _ in range(max_loops):
                 packages_before = self.buildroot.all_chroot_packages()
-                rebuilt_srpm = self.rebuild_installed_srpm(spec_path, timeout)
+                rebuilt_srpm = self.rebuild_installed_srpm(spec_path)
 
                 # Check if we will have dynamic BuildRequires, but do not allow it
                 hdr = next(util.yieldSrpmHeaders((rebuilt_srpm,)))
@@ -313,7 +425,7 @@ class Commands(object):
 
             try:
                 self.state.start(rpmbuildstate)
-                results = self.rebuild_package(spec_path, timeout, check, dynamic_buildreqs)
+                results = self.rebuild_package(spec_path, dynamic_buildreqs)
             finally:
                 self.state.finish(rpmbuildstate)
 
@@ -559,7 +671,7 @@ class Commands(object):
     #       -> except hooks. :)
     #
     @traceLog()
-    def buildsrpm(self, spec, sources, timeout, follow_links):
+    def buildsrpm(self, spec, sources, follow_links):
         """build an srpm, capture log"""
 
         # tell caching we are building
@@ -601,7 +713,7 @@ class Commands(object):
 
             self.state.start("rpmbuild -bs")
             try:
-                rebuilt_srpm = self.rebuild_installed_srpm(chrootspec, timeout)
+                rebuilt_srpm = self.rebuild_installed_srpm(chrootspec)
             finally:
                 self.state.finish("rpmbuild -bs")
 
@@ -666,53 +778,10 @@ class Commands(object):
             raise PkgError("Source RPM is not installable:\n{0}".format(output))
 
 
-    def _rpmbuild_help_output(self):
-        """
-        Run rpmbuild --help once in the chroot and return (cached) output.
-        Used to detect optional flags like --noclean and -bk.
-        """
-        if self._rpmbuild_help is None:
-            output, _ = self.buildroot.doChroot(
-                    "rpmbuild --help",
-                    shell=True, raiseExc=False, returnOutput=True,
-            )
-            self._rpmbuild_help = output or ""
-        return self._rpmbuild_help
-
-    @property
-    def _rpmbuild_noclean_option(self):
-        """
-        Return "--noclean" if rpmbuild supports it, otherwise "".
-
-        TODO: Remove --noclean detection once nobody is building for RHEL 6.
-        """
-        if self.config["cleanup_on_success"]:
-            return ""
-        if "--noclean" in self._rpmbuild_help_output():
-            return "--noclean"
-        return ""
-
-    @property
-    def _rpmbuild_supports_bk(self):
-        """True if rpmbuild supports -bk for separate %check (rpm >= 6.0.91)."""
-        # leading space to minimize chances for clash
-        return " -bk" in self._rpmbuild_help_output()
-
-
     @traceLog()
-    def rebuild_installed_srpm(self, spec_path, timeout):
-        command = ['{command} -bs {0} --target {1} --nodeps {2}'.format(
-            self._rpmbuild_noclean_option, self.rpmbuild_arch, spec_path,
-            command=self.config['rpmbuild_command'])]
-        command = ["bash", "--login", "-c"] + command
-        self.buildroot.doChroot(
-            command,
-            shell=False, logger=self.buildroot.build_log, timeout=timeout,
-            uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
-            user=self.buildroot.chrootuser,
-            unshare_net=self.private_network,
-            printOutput=self.config['print_main_output']
-        )
+    def rebuild_installed_srpm(self, spec_path):
+        rpmbuild = RpmBuild(self.buildroot, self.config, spec_path)
+        rpmbuild.run(['-bs'])
         results = glob.glob("%s/%s/SRPMS/*src.rpm" % (self.make_chroot_path(),
                                                       self.buildroot.builddir))
         if len(results) != 1:
@@ -720,34 +789,6 @@ class Commands(object):
                            % (len(results), "%s/%s/SRPMS/*src.rpm" % (self.make_chroot_path(),
                                                                       self.buildroot.builddir)))
         return results[0]
-
-    def _resolve_separate_check(self, check):
-        """
-        Decide whether to use separate %check phase based on config and
-        rpmbuild capabilities.  Returns True if we should split the build.
-        """
-        separate_check = self.config.get('separate_check')
-        if separate_check in (None, False, 'off') or not check:
-            return False
-
-        if separate_check not in ('best_effort', 'enforce'):
-            raise Error(
-                f"Invalid separate_check value: {separate_check}.  "
-                "Valid values are 'off', 'best_effort', 'enforce'")
-
-        supports_bk = self._rpmbuild_supports_bk
-        if separate_check == 'enforce' and not supports_bk:
-            raise Error(
-                "separate_check='enforce' requires rpmbuild with -bk support"
-                " (rpm >= 6.0.91)")
-
-        if separate_check == 'best_effort' and not supports_bk:
-            self.buildroot.build_log.warning(
-                "rpmbuild does not support -bk, falling back to"
-                " monolithic build with %check inline")
-            return False
-
-        return True
 
     @staticmethod
     @contextmanager
@@ -769,35 +810,9 @@ class Commands(object):
             for mp in mounted:
                 mp.umount()
 
-    def _run_separate_check(self, get_command, bd_out, timeout):
-        """Run %check as an isolated rpmbuild -bk --short-circuit phase."""
-        getLog().info("Running %check as a separate phase (rpmbuild -bk --short-circuit)")
-        command = get_command(['-bk', '--short-circuit'], with_check=True)
-        with self._protect_artifact_dirs(bd_out):
-            self.buildroot.doChroot(
-                command,
-                shell=False, logger=self.buildroot.build_log, timeout=timeout,
-                uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
-                user=self.buildroot.chrootuser,
-                unshare_net=self.private_network,
-                printOutput=self.config['print_main_output'])
-
     @traceLog()
-    def rebuild_package(self, spec_path, timeout, check, dynamic_buildrequires):
-        # --nodeps because rpm in the root may not be able to read rpmdb
-        # created by rpm that created it (outside of chroot)
-        check_opt = []
-        calculatedeps = self.config["calculatedeps"]
-        do_separate_check = self._resolve_separate_check(check)
-        if do_separate_check:
-            getLog().info("Skipping %check in main build; it will run as a separate phase later")
-            check_opt += ["--nocheck"]
-        elif check:
-            getLog().info("Running %check inline with the main build")
-        elif not check:
-            # this is because EL5/6 does not know --nocheck
-            # when EL5/6 targets are not supported, replace it with --nocheck
-            check_opt += ["--define", "'__spec_check_template exit 0; '"]
+    def rebuild_package(self, spec_path, dynamic_buildrequires):
+        rpmbuild = RpmBuild(self.buildroot, self.config, spec_path)
 
         mode = ['-bb']
         sc = self.config.get('short_circuit')
@@ -807,23 +822,9 @@ class Commands(object):
                        'build': '-bc',
                        'binary': '-bb'}[sc]
             mode += ['--short-circuit']
-        additional_opts = [self.config.get('rpmbuild_opts', '')]
-        if additional_opts == ['']:
-            additional_opts = []
-
-        def get_command(mode, checkdeps=False, with_check=False):
-            nodeps_opt = [] if checkdeps else ['--nodeps']
-            # check_opt contains --nocheck or equivalent; drop it when we
-            # explicitly want to run %check (separate check phase).
-            effective_check_opt = [] if with_check else check_opt
-            command = [self.config['rpmbuild_command']] + mode + \
-                      [self._rpmbuild_noclean_option] + \
-                      ['--target', self.rpmbuild_arch] + nodeps_opt + \
-                      effective_check_opt + [spec_path] + additional_opts
-            command = ["bash", "--login", "-c"] + [' '.join(command)]
-            return command
 
         bd_out = self.make_chroot_path(self.buildroot.builddir)
+        calculatedeps = self.config["calculatedeps"]
         dynamic_buildrequires = dynamic_buildrequires and self.config.get('dynamic_buildrequires')
         if dynamic_buildrequires:
             max_loops = int(self.config.get('dynamic_buildrequires_max_loops'))
@@ -835,18 +836,12 @@ class Commands(object):
                 # * installSrpmDeps does nothing
                 # * or we run out of dynamic_buildrequires_max_loops tries
                 packages_before = self.buildroot.all_chroot_packages()
-                command = get_command(br_mode)
-                (output, returncode) = \
-                    self.buildroot.doChroot(command,
-                                            shell=False, logger=self.buildroot.build_log, timeout=timeout,
-                                            uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
-                                            user=self.buildroot.chrootuser,
-                                            unshare_net=self.private_network, raiseExc=False,
-                                            printOutput=self.config['print_main_output'])
+                (output, returncode) = rpmbuild.run_build(
+                    br_mode, raiseExc=False)
                 if returncode > 0 and returncode != 11:
                     # we treat exit status 11 as success, as well as exit
                     # status 0, see issue#434
-                    raise BuildError("Command failed: \n # %s\n%s" % (command, output))
+                    raise BuildError("Command failed: \n # %s\n%s" % (br_mode, output))
                 max_loops -= 1
                 self.buildroot.build_log.info("Dynamic buildrequires detected")
                 self.buildroot.build_log.info("Going to install missing buildrequires. See root.log for details.")
@@ -886,15 +881,8 @@ class Commands(object):
 
         if not calculatedeps:
             checkdeps = dynamic_buildrequires and self.bootstrap_buildroot is not None
-            self.buildroot.doChroot(get_command(mode, checkdeps=checkdeps),
-                                    shell=False, logger=self.buildroot.build_log, timeout=timeout,
-                                    uid=self.buildroot.chrootuid, gid=self.buildroot.chrootgid,
-                                    user=self.buildroot.chrootuser,
-                                    unshare_net=self.private_network,
-                                    printOutput=self.config['print_main_output'])
-
-            if do_separate_check:
-                self._run_separate_check(get_command, bd_out, timeout)
+            rpmbuild.run_build(mode, checkdeps=checkdeps)
+            rpmbuild.run_separate_check(bd_out)
 
         results = glob.glob(bd_out + '/RPMS/*.rpm')
         results += glob.glob(bd_out + '/SRPMS/*.rpm')
