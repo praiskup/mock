@@ -1086,17 +1086,21 @@ class Buildroot(object):
         getLog().info("Protecting built artifacts in RPMS/ and SRPMS/ with tmpfs overlay")
         mounted = []
         try:
-            for subdir in ('RPMS', 'SRPMS'):
-                artifact_dir = os.path.join(chroot_builddir, subdir)
-                mount = mounts.FileSystemMountPoint(
-                    path=artifact_dir, filetype='tmpfs',
-                    options='size=1m')
-                mount.mount()
-                mounted.append(mount)
+            with self.uid_manager.elevated_privileges():
+                for subdir in ('RPMS', 'SRPMS'):
+                    artifact_dir = os.path.join(chroot_builddir, subdir)
+                    mount = mounts.FileSystemMountPoint(
+                        path=artifact_dir, filetype='tmpfs',
+                        options='size=1m')
+                    mount.mount()
+                    mounted.append(mount)
             yield
         finally:
-            for mp in mounted:
-                mp.umount()
+            with self.uid_manager.elevated_privileges():
+                for mp in mounted:
+                    if not mp.umount():
+                        raise RootError(
+                            "Failed to unmount artifact protection from %s" % mp.mountpath)
 
     def backup_build_results(self):
         """

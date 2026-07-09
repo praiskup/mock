@@ -709,7 +709,7 @@ class Commands(object):
                 if returncode > 0 and returncode != 11:
                     # we treat exit status 11 as success, as well as exit
                     # status 0, see issue#434
-                    raise BuildError("Command failed: \n # %s\n%s" % (br_mode, output))
+                    raise BuildError("Command failed: \n # %s\n%s" % (rpmbuild.last_command, output))
                 max_loops -= 1
                 self.buildroot.build_log.info("Dynamic buildrequires detected")
                 self.buildroot.build_log.info("Going to install missing buildrequires. See root.log for details.")

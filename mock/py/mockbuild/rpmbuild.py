@@ -2,7 +2,7 @@
 Thin wrapper for running rpmbuild inside a Mock chroot.
 """
 
-from .exception import Error
+from .exception import BadOption
 from .trace_decorator import getLog
 
 
@@ -60,6 +60,7 @@ class RpmBuild:
     def _resolve_check_flags(self):
         """Set self.use_separate_check and self._check_related_flags based on config."""
         self.use_separate_check = False
+        self._separate_check_fallback = False
 
         if not self._config['check']:
             self._check_related_flags = self._nocheck_option
@@ -69,25 +70,21 @@ class RpmBuild:
 
         separate_check = self._config.get('separate_check')
         if separate_check in (None, False, 'off'):
-            getLog().info("Running %check as part of the main build")
             return
 
         if separate_check not in ('best_effort', 'enforce'):
-            raise Error(
+            raise BadOption(
                 f"Invalid separate_check value: {separate_check}.  "
                 "Valid values are 'off', 'best_effort', 'enforce'")
 
         if not self.supports_bk:
             if separate_check == 'enforce':
-                raise Error(
+                raise BadOption(
                     "separate_check='enforce' requires rpmbuild with -bk support"
                     " (rpm >= 6.0.91)")
-            self._buildroot.build_log.warning(
-                "rpmbuild does not support -bk, falling back to"
-                " monolithic build with %check included")
+            self._separate_check_fallback = True
             return
 
-        getLog().info("Skipping %check in main build; it will run as a separate phase later")
         self._check_related_flags = self._nocheck_option
         self.use_separate_check = True
 
@@ -101,6 +98,7 @@ class RpmBuild:
                    + ['--target', self._config['rpmbuild_arch']] + nodeps
                    + [self._spec_path] + extra_opts)
         command = ["bash", "--login", "-c"] + [' '.join(command)]
+        self.last_command = command
         return self._buildroot.doChroot(
             command,
             shell=False, logger=self._buildroot.build_log,
@@ -113,6 +111,12 @@ class RpmBuild:
 
     def run_build(self, args, checkdeps=False, raiseExc=True):
         """Run rpmbuild with check-related flags automatically appended."""
+        if self.use_separate_check:
+            getLog().info("Skipping %check in main build; it will run as a separate phase later")
+        elif self._separate_check_fallback:
+            self._buildroot.build_log.warning(
+                "rpmbuild does not support -bk, falling back to"
+                " monolithic build with %check included")
         return self.run(args + self._check_related_flags,
                         checkdeps=checkdeps, raiseExc=raiseExc)
 
