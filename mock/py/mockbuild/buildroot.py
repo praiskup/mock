@@ -1100,7 +1100,7 @@ class Buildroot(object):
                 for mp in mounted:
                     if not mp.umount():
                         raise RootError(
-                            "Failed to unmount artifact protection from %s" % mp.mountpath)
+                            f"Failed to unmount artifact protection from {mp.mountpath}")
 
     def backup_build_results(self):
         """

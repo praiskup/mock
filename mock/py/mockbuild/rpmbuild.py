@@ -15,6 +15,7 @@ class RpmBuild:
         self._buildroot = buildroot
         self._config = config
         self._spec_path = spec_path
+        self.last_command = None
         self._resolve_check_flags()
 
     @property
