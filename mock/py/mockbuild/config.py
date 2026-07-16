@@ -394,6 +394,7 @@ def setup_default_config_opts():
         "search": ["--allowerasing"],
         "info": ["--allowerasing"],
         "download": ["--allowerasing"],
+        "list": ["--allowerasing"],
     }
 
     config_opts['microdnf_command'] = '/usr/bin/microdnf'
