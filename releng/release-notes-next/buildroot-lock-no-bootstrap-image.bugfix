@@ -1,0 +1,3 @@
+The `buildroot_lock` plugin no longer crashes when the bootstrap image is
+unavailable.  The lockfile is now only populated with bootstrap metadata when
+`use_bootstrap_image` is enabled ([issue#1758][]).

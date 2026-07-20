@@ -94,7 +94,8 @@ def _mock_vars(rpm_out, repoquery_out):
             (repoquery_out, None),
         ])
     )
-    buildroot.config = EXPECTED_OUTPUT['config']
+    buildroot.config = copy.copy(EXPECTED_OUTPUT['config'])
+    buildroot.config["use_bootstrap_image"] = True
     buildroot.resultdir = tempfile.mkdtemp(prefix="mock-test-buildroot-lock")
     plugins = MagicMock()
     plugins.add_hook = MagicMock()

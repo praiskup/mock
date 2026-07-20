@@ -99,10 +99,10 @@ class BuildrootLockfile:
                     if cfg_option in self.buildroot.config:
                         data["config"][cfg_option] = self.buildroot.config[cfg_option]
 
-                if "bootstrap_image" in data["config"]:
-                    # Optional object, only if bootstrap image used (we still
-                    # produce lockfiles even if these are useless for hermetic
-                    # builds).
+                # The 'bootstrap' field is omitted when 'use_bootstrap_image'
+                # is False.  Consequently, we cannot perform a subsequent
+                # hermetic build using this lockfile.
+                if self.buildroot.config["use_bootstrap_image"]:
                     with self.buildroot.uid_manager.elevated_privileges():
                         try:
                             podman = Podman(self.buildroot,
