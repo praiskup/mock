@@ -718,7 +718,8 @@ def set_config_opts_per_cmdline(config_opts, options, args):
 
     config_opts["calculatedeps"] = options.calculatedeps
     if config_opts["calculatedeps"]:
-        config_opts["plugin_conf"]["buildroot_lock_enable"] = True
+        if "buildroot_lock" not in options.disabled_plugins:
+            config_opts["plugin_conf"]["buildroot_lock_enable"] = True
 
     if options.buildroot_image:  # --buildroot-image option
         if os.path.exists(options.buildroot_image):
