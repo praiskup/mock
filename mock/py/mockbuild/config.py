@@ -442,12 +442,10 @@ def setup_default_config_opts():
         'i686': 'i386',
     }
 
-    # mapping from target_arch to OCI --platform string for podman pull
-    config_opts['oci_platform_map'] = {
-        'x86_64_v2': 'linux/amd64/v2',
-        'x86_64_v3': 'linux/amd64/v3',
-        'x86_64_v4': 'linux/amd64/v4',
-    }
+    # Temporary workaround for Podman not being able to auto-detect
+    # sub-architecture variants in OCI images (see PR #1733 and #1783).
+    # Overridden in AlmaLinux templates via almalinux-platforms.tpl.
+    config_opts['oci_platform_map'] = {}
 
     config_opts["recursion_limit"] = 5000
 

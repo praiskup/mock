@@ -118,6 +118,7 @@ class Podman:
         logger = getLog()
         logger.info("Pulling image: %s", self.image)
         cmd = [self.podman_binary, "pull"]
+        # Temporary workaround, see oci_platform_map in config.py and PR #1733/#1783.
         target_arch = self.buildroot.config.get('target_arch', '')
         oci_platform = self.buildroot.config.get('oci_platform_map', {}).get(target_arch)
         if oci_platform:

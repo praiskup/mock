@@ -6,6 +6,8 @@ config_opts['extra_chroot_dirs'] = [ '/run/lock', ]
 config_opts['bootstrap_image'] = 'quay.io/almalinuxorg/almalinux:9'
 config_opts['bootstrap_image_ready'] = True
 
+include('templates/almalinux-platforms.tpl')
+
 config_opts['dnf.conf'] = """
 [main]
 keepcache=1
