@@ -19,7 +19,7 @@
 
 Summary: Builds packages inside chroots
 Name: mock
-Version: 6.7
+Version: 6.8
 Release: 1%{?dist}
 License: GPL-2.0-or-later
 # Source is created by
@@ -47,7 +47,7 @@ Requires: polkit
 
 # We know that the current version of mock isn't compatible with older variants,
 # and we want to enforce automatic upgrades.
-Conflicts: mock-core-configs < 33
+Conflicts: mock-core-configs < 45.1
 
 # Requires 'mock-core-configs', or replacement (GitHub PR#544).
 Requires: mock-configs
@@ -363,6 +363,37 @@ pylint-3 py/mockbuild/ py/*.py py/mockbuild/plugins/* || :
 
 
 %changelog
+* Tue Aug 11 2026 Pavel Raiskup <pavel@raiskup.cz> 6.8-1
+- bump Conflicts to mock-core-configs < 45.1
+- Document oci_platform_map as a temporary workaround
+- Allow --disable-plugin buildroot_lock with --calculate-build-dependencies
+- buildroot_lock: don't inspect bootstrap image when not used
+- No --allowerasing for `dnf5 list`
+- Include support for polkit (rajibade@amazon.com)
+- Add support for isolated %%check phase
+- Add pivot_root_chroot option to enable user namespaces (tkopecek@redhat.com)
+- fix: add HTTP 503 to retry status_forcelist in mock-hermetic-repo (scoheb@gmail.com)
+- unbreq plugin: disable SRPM caching (marian.koncek@mailbox.org)
+- unbreq plugin: do not treat not installed packages as unused (marian.koncek@mailbox.org)
+- Add system monitor plugin  (#1748) (yaneti@declera.com)
+- fix: reload uidManager with chrootuid/chrootgid from config
+- Don't use --allowerasing with 'dnf download' (logans@cottsay.net)
+- fix: add newline at the end of each line of available_pkgs.log (msuchy@redhat.com)
+- feat: remove pkgid from package_state plugin output (msuchy@redhat.com)
+- add rpm as deps to tox tests (msuchy@redhat.com)
+- fix: preserve readable permissions when copying spec files into chroot (#1300) (msuchy@redhat.com)
+- fix: add timeout to podman pull to prevent indefinite hangs (#1680) (msuchy@redhat.com)
+- bash-completion: localrepo takes a directory arg (linux@cmadams.net)
+- bash-completion: chain doesn't take an config arg (linux@cmadams.net)
+- fix: --verbose no longer duplicates build log into root log (#1302) (msuchy@redhat.com)
+- shadow_utils: useradd --root for newer systems (praiskup@redhat.com)
+- generate available_pkgs.log for dnf5/dnf4 package managers (msuchy@redhat.com)
+- fix: preserve dnf.conf/yum.conf timestamps when content is unchanged (msuchy@redhat.com)
+- feat: add OCI platform support for x86_64 sub-architecture containers (andrew.lukoshko@gmail.com)
+- Decode file:// repo paths before bootstrap bind mount (lukas.lipinsky@oracle.com)
+- Fix the tool check (tkopecek@redhat.com)
+- Refactor NS resolver logic for clarity and consistency
+
 * Tue Mar 03 2026 Pavel Raiskup <pavel@raiskup.cz> 6.7-1
 - mock: Use umask 0022 instead of 0002 to avoid strange permissions (ngompa@velocitylimitless.com)
 - expand_spec plugin: generating expanded-spec.txt in postdeps hook (yzhu@redhat.com)

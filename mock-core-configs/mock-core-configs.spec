@@ -3,7 +3,7 @@
 %endif
 
 Name:       mock-core-configs
-Version:    45.0
+Version:    45.1
 Release:    1%{?dist}
 Summary:    Mock core config files basic chroots
 
@@ -24,7 +24,7 @@ Provides: mock-configs
 # distribution-gpg-keys contains GPG keys used by mock configs
 Requires:   distribution-gpg-keys >= 1.121
 # specify minimal compatible version of mock
-Requires:   mock >= 6.1.test
+Requires:   mock >= 6.8
 Requires:   mock-filesystem
 
 Requires(post): coreutils
@@ -156,6 +156,15 @@ fi
 %ghost %config(noreplace,missingok) %{_sysconfdir}/mock/default.cfg
 
 %changelog
+* Tue Aug 11 2026 Pavel Raiskup <pavel@raiskup.cz> 45.1-1
+- branch Fedora 45 from Rawhide
+- Document oci_platform_map as a temporary workaround
+- update openEuler 24.03 LTS chroot to SP4 and fix source metalink (pkwarcraft@gmail.com)
+- add Extensions repos to ELN (yselkowi@redhat.com)
+- Add missing fedora-45-riscv64.cfg (abologna@redhat.com)
+- Use cdn.opensuse.org for openSUSE baseurls. (negativo17@gmail.com)
+- update Mageia configs (wally@mageia.org)
+
 * Wed Jun 24 2026 Pavel Raiskup <pavel@raiskup.cz> 44.4-1
 - Fixes #1761: Add Fedora Rawhide RISC-V (jmontleo@redhat.com)
 - configs: add Azure Linux 4.0 beta configuration (tobiasb@microsoft.com)
