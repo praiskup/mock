@@ -3,7 +3,7 @@
 %endif
 
 Name:       mock-core-configs
-Version:    44.4
+Version:    45.0
 Release:    1%{?dist}
 Summary:    Mock core config files basic chroots
 
@@ -22,7 +22,7 @@ BuildArch:  noarch
 Provides: mock-configs
 
 # distribution-gpg-keys contains GPG keys used by mock configs
-Requires:   distribution-gpg-keys >= 1.117
+Requires:   distribution-gpg-keys >= 1.121
 # specify minimal compatible version of mock
 Requires:   mock >= 6.1.test
 Requires:   mock-filesystem

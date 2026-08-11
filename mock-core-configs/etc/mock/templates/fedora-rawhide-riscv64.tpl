@@ -5,7 +5,7 @@ config_opts['chroot_setup_cmd'] = 'install @build'
 
 config_opts['dist'] = 'rawhide'
 config_opts['extra_chroot_dirs'] = [ '/run/lock', ]
-config_opts['releasever'] = '45'
+config_opts['releasever'] = '46'
 
 config_opts['package_manager'] = 'dnf5'
 
