@@ -1,5 +1,6 @@
 FROM registry.fedoraproject.org/fedora:rawhide
 
+RUN dnf copr enable @mock/mock-deps -y
 RUN dnf -y install fedpkg tito argparse-manpage bash-completion python3-devel python3-jsonschema python3-pytest
 RUN useradd -m -G mock -u 1001 user
 WORKDIR /home/user
